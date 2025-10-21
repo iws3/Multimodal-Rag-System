@@ -24,9 +24,14 @@ from app.config.setting import EMBEDDING_MODEL_NAME, EMBEDDING_DIMENSION
 # This saves memory and significantly speeds up embedding generation.
 embedding_model: Optional[SentenceTransformer] = None
 
-async def load_embedding_model():
+
+def load_embedding_model():
     """
     Loads the SentenceTransformer model. This should be called once at application startup.
+
+    This function is synchronous because many parts of the code (and FastAPI
+    startup) call it synchronously. Keeping it synchronous avoids accidental
+    coroutine misuse where code calls it without awaiting.
     """
     global embedding_model
     if embedding_model is None:
@@ -43,15 +48,14 @@ async def load_embedding_model():
             print(f"ERROR: Failed to load embedding model {EMBEDDING_MODEL_NAME}: {e}")
             embedding_model = None # Ensure it's None if loading failed
 
+
 def get_embedding_model() -> SentenceTransformer:
-    
     """
     Returns the loaded embedding model instance. Ensures it's loaded first.
-    
     """
     if embedding_model is None:
-        load_embedding_model() # Attempt to load if not already loaded
-        if embedding_model is None: # If still None, loading failed
+        load_embedding_model()
+        if embedding_model is None:
             raise RuntimeError("Embedding model is not loaded and could not be initialized.")
     return embedding_model
 

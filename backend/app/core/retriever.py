@@ -9,6 +9,7 @@ from sqlalchemy import text
 from app.db.models import Chunk, Document
 from app.core.embeddings import generate_embedding
 from app.config.setting import EMBEDDING_DIMENSION
+from typing import Iterable
 
 
 async def retrieve_similar_chunks(
@@ -46,24 +47,49 @@ async def retrieve_similar_chunks(
         "top_k": top_k,
     }
 
-    if document_type:
-        where_clauses.append("d.document_type = :document_type")
-        params["document_type"] = document_type
+
+    # Map common user-friendly document_type terms to stored values.
+    # This helps when callers use labels like 'academic_paper' but stored
+    # documents use 'text' or 'pdf'. You can extend this mapping as needed.
+    synonyms = {
+        "academic_paper": ["text", "pdf", "article", "paper"],
+        "paper": ["text", "pdf"],
+        "image": ["image", "img", "picture"],
+        "audio": ["audio", "recording"],
+    }
+
+    def expand_types(dt: Optional[str]) -> Optional[Iterable[str]]:
+        if not dt:
+            return None
+        if dt in synonyms:
+            return synonyms[dt]
+        # if caller passed a comma-separated list, split and strip
+        if "," in dt:
+            return [p.strip() for p in dt.split(",") if p.strip()]
+        return [dt]
+
+    expanded_types = expand_types(document_type)
+    if expanded_types:
+        # Build a SQL IN clause for document types
+        where_clauses.append("d.document_type = ANY(:document_types)")
+        params["document_types"] = list(expanded_types)
 
     # 3. Construct SQL query
     # NOTE:
     # - We use `CAST(:query_embedding AS vector)` to ensure correct pgvector type casting
-    # - We renamed `meta_data` → `metadata` to match standard model naming
+    # - Use distance = c.embedding <=> query_vector and map it into similarity via
+    #   similarity = 1 / (1 + distance) in SQL so the returned value is bounded (0,1].
     sql_query = f"""
 SELECT
     c.id AS chunk_id,
     c.content,
-    c.meta_data AS chunk_metadata,       -- ✅ fixed
+    c.meta_data AS chunk_metadata,
     c.document_id,
     d.title AS document_title,
     d.document_type,
-    d.meta_data AS document_metadata,    -- ✅ fixed
-    1 - (c.embedding <=> CAST(:query_embedding AS vector)) AS similarity
+    d.meta_data AS document_metadata,
+    (c.embedding <=> CAST(:query_embedding AS vector)) AS distance,
+    1.0 / (1.0 + (c.embedding <=> CAST(:query_embedding AS vector))) AS similarity
 FROM chunks c
 JOIN documents d ON c.document_id = d.id
 {"WHERE " + " AND ".join(where_clauses) if where_clauses else ""}
@@ -79,8 +105,9 @@ LIMIT :top_k;
     retrieved_results = []
     for row in retrieved_chunks_raw:
         similarity = float(row.similarity)
+        distance = float(row.distance) if hasattr(row, 'distance') else None
         if similarity >= min_similarity:
-            retrieved_results.append({
+            item = {
                 "chunk_id": str(row.chunk_id),
                 "content": row.content,
                 "chunk_metadata": row.chunk_metadata,
@@ -89,7 +116,10 @@ LIMIT :top_k;
                 "document_type": row.document_type,
                 "document_metadata": row.document_metadata,
                 "similarity": similarity
-            })
+            }
+            if distance is not None:
+                item["distance"] = distance
+            retrieved_results.append(item)
 
     print(f"✅ Retrieved {len(retrieved_results)} chunks "
           f"(out of {len(retrieved_chunks_raw)} before filtering).")

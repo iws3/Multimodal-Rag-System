@@ -106,7 +106,7 @@ class Query(Base):
     """
     Stores records of user queries and the system's responses for analytics, logging,
     and potentially for feedback/reinforcement learning.
-    """
+    """ 
     __tablename__ = "queries"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

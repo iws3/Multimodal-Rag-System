@@ -6,6 +6,8 @@ from app.db.connection import get_db, init_db, engine, Base
 from app.db.models import Document, Chunk
 from app.core.embeddings import load_embedding_model
 from app.core.retriever import retrieve_similar_chunks
+from app.api.library import router as library_router
+from app.api.upload import router as upload_router
 from typing import List, Dict, Optional
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
@@ -36,6 +38,11 @@ app = FastAPI(
     version=API_VERSION,
     lifespan=lifespan,  # 👈 NEW: replaced @app.on_event
 )
+
+# Register high-level library API routes (embed/chunk/store/retrieve/upsert)
+app.include_router(library_router, prefix="/api")
+# Register upload endpoints (file/json upload that triggers background processing)
+app.include_router(upload_router, prefix="/api")
 
 # -------------------------------------------------------------------
 # ✅ Health check route
